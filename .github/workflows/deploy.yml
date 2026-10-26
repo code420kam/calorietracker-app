@@ -30,8 +30,10 @@ jobs:
           npm ci
           npm run build
 
-      - name: Copy dist to docs
-        run: cp -r dist docs
+      - name: Copy dist to docs root
+        run: |
+          rm -rf docs
+          cp -r dist docs
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
