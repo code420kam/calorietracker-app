@@ -2,7 +2,7 @@ import type { User, Meal, DailyGoals } from '../types'
 
 export function getBaseURL() {
   // Use the deployed backend on Render
-  return 'https://calorietracker-backend.onrender.com/api'
+  return 'https://ct-api-now.loca.lt/api'
 }
 
 export interface AuthResponse {
