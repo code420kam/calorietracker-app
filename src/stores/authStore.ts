@@ -2,7 +2,7 @@ import type { User, Meal, DailyGoals } from '../types'
 
 export function getBaseURL() {
   // Use the deployed backend on Render
-  return 'https://b48b37efb6a12a8a-92-208-234-195.serveousercontent.com/api'
+  return 'https://plain-monkeys-turn.loca.lt/api'
 }
 
 export interface AuthResponse {
