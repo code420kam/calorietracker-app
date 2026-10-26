@@ -1,6 +1,6 @@
 import { User, Meal, DailyGoals } from '../types'
 
-const API_BASE = 'https://ct-api-javis.loca.lt/api'
+const API_BASE = 'https://ct-api-live.loca.lt/api'
 
 export interface AuthResponse {
   token: string
