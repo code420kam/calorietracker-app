@@ -2,7 +2,7 @@ import type { User, Meal, DailyGoals } from '../types'
 
 export function getBaseURL() {
   // Use the deployed backend on Render
-  return 'https://plain-monkeys-turn.loca.lt/api'
+  return 'https://two-jars-work.loca.lt/api'
 }
 
 export interface AuthResponse {
@@ -17,7 +17,7 @@ export async function login(email: string, password: string): Promise<AuthRespon
     body: JSON.stringify({ email, password }),
   })
   if (!res.ok) {
-    const err = await res.json()
+    const err = await res.json().catch(() => ({ error: 'Server nicht erreichbar. Bitte App neuladen.' }))
     throw new Error(err.error || 'Login fehlgeschlagen')
   }
   return res.json()
@@ -39,7 +39,7 @@ export async function register(data: {
     body: JSON.stringify(data),
   })
   if (!res.ok) {
-    const err = await res.json()
+    const err = await res.json().catch(() => ({ error: 'Server nicht erreichbar. Bitte App neuladen.' }))
     throw new Error(err.error || 'Registrierung fehlgeschlagen')
   }
   return res.json()
