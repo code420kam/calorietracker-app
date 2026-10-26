@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
-import { addMeal, searchProducts } from '../stores/authStore'
+import { useNavigate, useLocation, useSearchParams } from 'react-router-dom'
+import { addMeal, searchProducts, addFavorite } from '../stores/authStore'
 
 interface Props { token: string }
 
@@ -29,7 +29,9 @@ interface FoodPer100g {
 export default function AddMeal({ token }: Props) {
   const navigate = useNavigate()
   const location = useLocation()
-  const [tab, setTab] = useState<'search' | 'manual' | 'scan'>('search')
+  const [searchParams] = useSearchParams()
+  const [tab, setTab] = useState<'search' | 'manual' | 'scan' | 'photo'>('search')
+  const [photoAddedItems, setPhotoAddedItems] = useState<FoodPer100g[]>([])
   const [search, setSearch] = useState('')
   const [results, setResults] = useState<FoodPer100g[]>([])
   const [searching, setSearching] = useState(false)
@@ -63,26 +65,27 @@ export default function AddMeal({ token }: Props) {
     return () => document.removeEventListener('mousedown', handleClick)
   }, [])
 
-  // Prefill von Barcode-Scan oder Suche-Ergebnis
+  // Prefill von Barcode-Scan, Suche-Ergebnis oder PhotoAI
   useEffect(() => {
     const state = location.state as { prefill?: FoodPer100g } | null
     if (state?.prefill) {
       const f = state.prefill
       setSelectedFood(f)
-      setForm({
-        name: f.name,
-        calories: String(f.calories),
-        carbs: String(f.carbs),
-        protein: String(f.protein),
-        fat: String(f.fat),
-        fiber: String(f.fiber ?? ''),
-        amount: '100',
-      })
+      setForm({ name: f.name, calories: String(f.calories), carbs: String(f.carbs), protein: String(f.protein), fat: String(f.fat), fiber: String(f.fiber ?? ''), amount: '100' })
       setSearchAmount('100')
       setTab('search')
       navigate(location.pathname, { replace: true })
     }
-  }, [location.state, navigate, location.pathname])
+    // PhotoAI: ?photoItems=...
+    const photoItemsParam = searchParams.get('photoItems')
+    if (photoItemsParam) {
+      try {
+        const items = JSON.parse(decodeURIComponent(photoItemsParam)) as { name: string; calories: number; carbs: number; protein: number; fat: number; fiber: number; amount: number }[]
+        setPhotoAddedItems(items.map(i => ({ name: i.name, calories: i.calories, carbs: i.carbs, protein: i.protein, fat: i.fat, fiber: i.fiber ?? 0 })))
+        setTab('photo')
+      } catch {}
+    }
+  }, [location.state, navigate, location.pathname, searchParams])
 
   // ---- Autovervollständigung: debounced Suche ----
   useEffect(() => {
@@ -183,15 +186,10 @@ export default function AddMeal({ token }: Props) {
 
       <div className="page-content">
         <div className="tabs">
-          <button className={`tab ${tab === 'search' ? 'active' : ''}`} onClick={() => setTab('search')}>
-            🔍 Suche
-          </button>
-          <button className={`tab ${tab === 'scan' ? 'active' : ''}`} onClick={() => navigate('/scan')}>
-            📷 Scan
-          </button>
-          <button className={`tab ${tab === 'manual' ? 'active' : ''}`} onClick={() => setTab('manual')}>
-            ✏️ Manuell
-          </button>
+          <button className={`tab ${tab === 'search' ? 'active' : ''}`} onClick={() => setTab('search')}>🔍 Suche</button>
+          <button className={`tab ${tab === 'scan' ? 'active' : ''}`} onClick={() => navigate('/scan')}>📷 Scan</button>
+          <button className={`tab ${tab === 'photo' ? 'active' : ''}`} onClick={() => navigate('/photo-scan')}>📸 Foto</button>
+          <button className={`tab ${tab === 'manual' ? 'active' : ''}`} onClick={() => setTab('manual')}>✏️ Manuell</button>
         </div>
 
         {/* ==================== SUCHE-TAB ==================== */}
@@ -308,6 +306,81 @@ export default function AddMeal({ token }: Props) {
                 </button>
               </div>
             )}
+          </>
+        )}
+
+        {/* ==================== FOTO-TAB (von PhotoAI) ==================== */}
+        {tab === 'photo' && photoAddedItems.length > 0 && (
+          <>
+            <div className="card" style={{ background: '#0B1730', color: '#fff', marginBottom: 14, padding: '12px 16px' }}>
+              <div style={{ fontSize: 13, color: '#94A3B8' }}>📸 Erkannte Lebensmittel – Menge prüfen &amp; bestätigen</div>
+            </div>
+            {photoAddedItems.map((item, idx) => (
+              <div key={idx} className="card" style={{ marginBottom: 12 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 15, fontWeight: 700 }}>{item.name}</div>
+                    <div style={{ fontSize: 12, color: '#64748B' }}>~{item.amount}g · AI-Schätzung</div>
+                  </div>
+                  <span className="macro-pill"><span className="macro-pill-value">{item.calories} kcal</span></span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6, marginBottom: 10 }}>
+                  {[
+                    { label: 'Protein', val: item.protein + 'g' },
+                    { label: 'Kohlenhydrate', val: item.carbs + 'g' },
+                    { label: 'Fett', val: item.fat + 'g' },
+                  ].map(m => (
+                    <div key={m.label} className="macro-pill" style={{ flexDirection: 'column', alignItems: 'center', padding: '6px 4px' }}>
+                      <span className="macro-pill-label" style={{ fontSize: 10 }}>{m.label}</span>
+                      <span className="macro-pill-value">{m.val}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="input-group" style={{ marginBottom: 10 }}>
+                  <label>Menge anpassen (g)</label>
+                  <input className="input" type="number" min="1"
+                    defaultValue={item.amount}
+                    onChange={e => {
+                      const g = parseFloat(e.target.value) || item.amount
+                      const scale = g / item.amount
+                      setPhotoAddedItems(prev => prev.map((p, i) => i === idx ? {
+                        ...p, amount: g,
+                        calories: Math.round(p.calories * scale * 10) / 10,
+                        carbs: Math.round(p.carbs * scale * 10) / 10,
+                        protein: Math.round(p.protein * scale * 10) / 10,
+                        fat: Math.round(p.fat * scale * 10) / 10,
+                      } : p))
+                    }} />
+                </div>
+                <div className="meal-type-row" style={{ marginBottom: 10 }}>
+                  {MEAL_TYPES.map(t => (
+                    <button key={t.key} className={`meal-type-btn ${mealType === t.key ? 'active' : ''}`}
+                      onClick={() => setMealType(t.key)}>{t.label}</button>
+                  ))}
+                </div>
+                <button className="btn btn-primary" style={{ width: '100%' }}
+                  onClick={async () => {
+                    setSaving(true)
+                    try {
+                      await addMeal(token, {
+                        name: item.name, calories: item.calories, carbs: item.carbs,
+                        protein: item.protein, fat: item.fat, fiber: item.fiber ?? 0,
+                        amount: item.amount, type: mealType, date,
+                      })
+                      const remaining = photoAddedItems.filter((_, i) => i !== idx)
+                      setPhotoAddedItems(remaining)
+                      if (remaining.length === 0) navigate('/dashboard')
+                    } catch { setError('Fehler beim Speichern') }
+                    setSaving(false)
+                  }}>
+                  ✓ Mahlzeit speichern
+                </button>
+              </div>
+            ))}
+            <button className="btn-secondary" style={{ width: '100%', marginTop: 2 }}
+              onClick={() => { setPhotoAddedItems([]); setTab('search') }}>
+              ✕ Verwerfen &amp; zurück
+            </button>
           </>
         )}
 

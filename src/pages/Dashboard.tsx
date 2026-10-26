@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getMeals, deleteMeal } from '../stores/authStore'
-import type { Meal, User } from '../types'
+import { getDashboard, getWater, addWater, deleteMeal } from '../stores/authStore'
+import type { Meal, User, Activity, WaterEntry } from '../types'
+import { ACTIVITY_LABELS } from '../types'
 
 interface Props { token: string; logout: () => void }
 
@@ -13,36 +14,63 @@ export default function Dashboard({ token, logout }: Props) {
   const tdee = user.tdee || 2000
   const [date, setDate] = useState(() => new Date().toISOString().split('T')[0])
   const [meals, setMeals] = useState<Meal[]>([])
+  const [activities, setActivities] = useState<Activity[]>([])
+  const [waterEntries, setWaterEntries] = useState<WaterEntry[]>([])
+  const [waterTotal, setWaterTotal] = useState(0)
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => { loadMeals() }, [date])
+  useEffect(() => { loadAll() }, [date])
 
-  async function loadMeals() {
+  async function loadAll() {
     setLoading(true)
-    try { setMeals(await getMeals(token, date)) } catch { setMeals([]) }
+    try {
+      const [dash, water] = await Promise.all([
+        getDashboard(token, date),
+        getWater(token, date),
+      ])
+      setMeals(dash.meals)
+      setActivities(dash.activities)
+      setWaterEntries(water.entries)
+      setWaterTotal(water.total)
+    } catch {
+      setMeals([]); setActivities([]); setWaterEntries([]); setWaterTotal(0)
+    }
     setLoading(false)
   }
 
-  async function handleDelete(id: string) {
+  async function handleDeleteMeal(id: string) {
     try { await deleteMeal(token, id); setMeals(prev => prev.filter(m => m.id !== id)) } catch {}
   }
 
-  const totals = meals.reduce((acc, m) => ({
-    calories: acc.calories + m.calories,
-    carbs: acc.carbs + m.carbs,
-    protein: acc.protein + m.protein,
-    fat: acc.fat + m.fat,
-    fiber: acc.fiber + (m.fiber || 0),
-  }), { calories: 0, carbs: 0, protein: 0, fat: 0, fiber: 0 })
+  async function handleQuickWater(ml: number) {
+    try {
+      const result = await addWater(token, date, ml)
+      setWaterTotal(result.total)
+      const water = await getWater(token, date)
+      setWaterEntries(water.entries)
+    } catch {}
+  }
 
-  const calBalance = tdee - totals.calories
-  const calPercent = Math.min(100, Math.round((totals.calories / tdee) * 100))
-  const isOver = calBalance < 0
+  async function handleDeleteWater(id: string) {
+    try {
+      await deleteMeal(token, id)
+      const water = await getWater(token, date)
+      setWaterEntries(water.entries)
+      setWaterTotal(water.total)
+    } catch {}
+  }
+
+  const mealCalories = meals.reduce((s, m) => s + m.calories, 0)
+  const activityCalories = activities.reduce((s, a) => s + (a.calories || 0), 0)
+  const totalBurned = tdee + activityCalories
+  const remaining = totalBurned - mealCalories
+  const waterGoal = user.dailyGoals?.water || 2500
+  const waterPct = Math.min(100, Math.round((waterTotal / waterGoal) * 100))
 
   const fmtDate = (d: string) => {
-    const dt = new Date(d + 'T00:00:00')
     const today = new Date().toISOString().split('T')[0]
     if (d === today) return 'Heute'
+    const dt = new Date(d + 'T00:00:00')
     return dt.toLocaleDateString('de-DE', { day: '2-digit', month: 'short' })
   }
 
@@ -58,65 +86,119 @@ export default function Dashboard({ token, logout }: Props) {
       </div>
 
       <div className="page-content">
-        {/* User + TDEE Card */}
-        <div className="card" style={{ background: '#0B1730', color: 'white', marginBottom: 16 }}>
-          <div style={{ fontSize: 13, color: '#94A3B8', marginBottom: 4 }}>Tagesbedarf (TDEE)</div>
-          <div style={{ fontSize: 32, fontWeight: 800, color: '#00CDBB' }}>{tdee} kcal</div>
-          <div style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>
-            Grundumsatz: {user.bmr || '—'} kcal · Aktivität: {user.activityLevel === 'sedentary' ? 'Sitzend' : user.activityLevel === 'light' ? 'Leicht' : user.activityLevel === 'moderate' ? 'Moderat' : user.activityLevel === 'active' ? 'Aktiv' : 'Sehr aktiv'}
+        {/* TDEE Card */}
+        <div className="card" style={{ background: '#0B1730', color: 'white', marginBottom: 12 }}>
+          <div style={{ fontSize: 13, color: '#94A3B8', marginBottom: 2 }}>Tagesbedarf (TDEE)</div>
+          <div style={{ fontSize: 28, fontWeight: 800, color: '#00CDBB' }}>{tdee} kcal</div>
+          <div style={{ fontSize: 11, color: '#64748B' }}>
+            BMR: {user.bmr || '—'} kcal · Aktivität: {user.activityLevel === 'sedentary' ? 'Sitzend' : user.activityLevel === 'light' ? 'Leicht' : user.activityLevel === 'moderate' ? 'Moderat' : user.activityLevel === 'active' ? 'Aktiv' : 'Sehr aktiv'}
           </div>
         </div>
 
         {/* Date Nav */}
-        <div className="date-nav">
+        <div className="date-nav" style={{ marginBottom: 12 }}>
           <button className="date-btn" onClick={prevDay}>‹</button>
           <button className="date-display" onClick={today}>{fmtDate(date)}</button>
           <button className="date-btn" onClick={nextDay}>›</button>
         </div>
 
-        {/* Calorie Progress */}
-        <div className="card">
+        {/* Calorie Breakdown */}
+        <div className="card" style={{ marginBottom: 10 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-            <span style={{ fontSize: 15, fontWeight: 700 }}>Kalorien</span>
-            <span style={{ fontSize: 15, fontWeight: 700, color: isOver ? '#EF4444' : '#00CDBB' }}>
-              {Math.round(totals.calories)} / {tdee} kcal
+            <span style={{ fontSize: 14, fontWeight: 700 }}>🔥 Kalorien</span>
+            <span style={{ fontSize: 14, fontWeight: 700, color: remaining < 0 ? '#EF4444' : '#00CDBB' }}>
+              {Math.round(mealCalories)} / {totalBurned} kcal
             </span>
           </div>
-          <div className="progress-bar" style={{ height: 12 }}>
+          <div className="progress-bar" style={{ height: 10 }}>
             <div className="progress-fill" style={{
-              width: `${calPercent}%`,
-              background: isOver ? '#EF4444' : calPercent > 80 ? '#F59E0B' : '#00CDBB'
+              width: `${Math.min(100, Math.round((mealCalories / totalBurned) * 100))}%`,
+              background: mealCalories > totalBurned ? '#EF4444' : '#00CDBB'
             }} />
           </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, fontSize: 12, color: '#64748B' }}>
-            <span>{calPercent}% verbraucht</span>
-            <span style={{ color: isOver ? '#EF4444' : '#00CDBB', fontWeight: 700 }}>
-              {isOver ? `+${Math.abs(Math.round(calBalance))} kcal Über` : `${Math.round(calBalance)} kcal übrig`}
-            </span>
+          <div style={{ marginTop: 6, fontSize: 11, color: '#64748B', display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <div>Grundbedarf: <strong style={{ color: '#94A3B8' }}>{tdee} kcal</strong>
+              {activityCalories > 0 && <span> · Aktivität: <strong style={{ color: '#F97316' }}>+{activityCalories} kcal</strong></span>}
+            </div>
+            <div style={{ color: remaining < 0 ? '#EF4444' : '#00CDBB', fontWeight: 700 }}>
+              {remaining < 0 ? `+${Math.abs(Math.round(remaining))} kcal Über` : `${Math.round(remaining)} kcal übrig`}
+            </div>
           </div>
         </div>
 
         {/* Macro Grid */}
-        <div className="kpi-grid" style={{ marginBottom: 16 }}>
+        <div className="kpi-grid" style={{ marginBottom: 10 }}>
           {[
-            { label: 'Eiw.', value: Math.round(totals.protein), unit: 'g', target: user.dailyGoals?.protein || 100 },
-            { label: 'Kohlenhydr.', value: Math.round(totals.carbs), unit: 'g', target: user.dailyGoals?.carbs || 250 },
-            { label: 'Fett', value: Math.round(totals.fat), unit: 'g', target: user.dailyGoals?.fat || 70 },
-            { label: 'Ballastst.', value: Math.round(totals.fiber * 10) / 10, unit: 'g', target: 30 },
+            { label: 'Eiw.', value: Math.round(meals.reduce((s, m) => s + m.protein, 0)), unit: 'g', target: user.dailyGoals?.protein || 100, color: '#A78BFA' },
+            { label: 'Kohlenhydr.', value: Math.round(meals.reduce((s, m) => s + m.carbs, 0)), unit: 'g', target: user.dailyGoals?.carbs || 250, color: '#FB923C' },
+            { label: 'Fett', value: Math.round(meals.reduce((s, m) => s + m.fat, 0)), unit: 'g', target: user.dailyGoals?.fat || 70, color: '#FBBF24' },
+            { label: 'Ballastst.', value: Math.round(meals.reduce((s, m) => s + (m.fiber || 0), 0) * 10) / 10, unit: 'g', target: 30, color: '#4ADE80' },
           ].map(m => (
             <div key={m.label} className="kpi-card">
-              <div className="kpi-value">{m.value}<span style={{ fontSize: 11, fontWeight: 400 }}>{m.unit}</span></div>
+              <div className="kpi-value" style={{ color: m.color }}>{m.value}<span style={{ fontSize: 11, fontWeight: 400 }}>{m.unit}</span></div>
               <div className="kpi-label">{m.label}</div>
               <div className="progress-bar" style={{ marginTop: 4 }}>
-                <div className="progress-fill" style={{ width: `${Math.min(100, (m.value / m.target) * 100)}%` }} />
+                <div className="progress-fill" style={{ width: `${Math.min(100, (m.value / m.target) * 100)}%`, background: m.color }} />
               </div>
             </div>
           ))}
         </div>
 
+        {/* Water Quick */}
+        <div className="card" style={{ marginBottom: 10, padding: '12px 14px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <button onClick={() => navigate('/water')} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontSize: 16 }}>💧</span>
+              <span style={{ fontSize: 13, fontWeight: 700 }}>Wasser</span>
+            </button>
+            <span style={{ fontSize: 13, color: '#38BDF8', fontWeight: 700 }}>{(waterTotal / 1000).toFixed(1)} / {(waterGoal / 1000).toFixed(1)} L</span>
+          </div>
+          <div className="progress-bar" style={{ height: 8 }}>
+            <div className="progress-fill" style={{ width: `${waterPct}%`, background: waterPct >= 100 ? '#22C55E' : '#38BDF8' }} />
+          </div>
+          <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+            {[250, 500].map(ml => (
+              <button key={ml} className="btn-secondary" style={{ flex: 1, fontSize: 12, padding: '5px 0' }}
+                onClick={() => handleQuickWater(ml)}>+{ml} ml</button>
+            ))}
+            <button className="btn-secondary" style={{ flex: 1, fontSize: 12, padding: '5px 0' }}
+              onClick={() => navigate('/water')}>Mehr</button>
+          </div>
+        </div>
+
+        {/* Activity Quick */}
+        <div className="card" style={{ marginBottom: 10, padding: '12px 14px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <button onClick={() => navigate('/activities')} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontSize: 16 }}>🏃</span>
+              <span style={{ fontSize: 13, fontWeight: 700 }}>Aktivität</span>
+            </button>
+            <span style={{ fontSize: 13, color: '#F97316', fontWeight: 700 }}>+{activityCalories} kcal</span>
+          </div>
+          {activities.length === 0 ? (
+            <button className="btn-secondary" style={{ width: '100%', fontSize: 12, padding: '6px' }}
+              onClick={() => navigate('/activities')}>+ Aktivität erfassen</button>
+          ) : (
+            <div style={{ fontSize: 12, color: '#64748B' }}>
+              {activities.slice(0, 2).map(a => (
+                <div key={a.id} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>{ACTIVITY_LABELS[a.type as keyof typeof ACTIVITY_LABELS]}</span>
+                  <span>{a.duration} min · +{a.calories} kcal</span>
+                </div>
+              ))}
+              {activities.length > 2 && <div style={{ color: '#475569' }}>+{activities.length - 2} mehr</div>}
+            </div>
+          )}
+        </div>
+
         {/* Meals */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, marginTop: 4 }}>
+          <span style={{ fontSize: 14, fontWeight: 700 }}>🍽️ Mahlzeiten</span>
+          <button className="btn-secondary" style={{ fontSize: 11, padding: '4px 10px' }} onClick={() => navigate('/favorites')}>⭐ Favoriten</button>
+        </div>
+
         {loading ? (
-          <div>{[1,2].map(i => <div key={i} className="skeleton" style={{ height: 56, marginBottom: 8, borderRadius: 12 }} />)}</div>
+          <div>{[1, 2].map(i => <div key={i} className="skeleton" style={{ height: 56, marginBottom: 8, borderRadius: 12 }} />)}</div>
         ) : meals.length === 0 ? (
           <div className="empty-state">
             <div className="empty-icon">🍽️</div>
@@ -124,22 +206,19 @@ export default function Dashboard({ token, logout }: Props) {
             <div className="empty-desc">Füge Mahlzeiten für diesen Tag hinzu.</div>
           </div>
         ) : (
-          <div className="card" style={{ padding: 0 }}>
+          <div className="card" style={{ padding: 0, marginBottom: 80 }}>
             {meals.map(meal => (
-              <div key={meal.id} className="meal-item" style={{ padding: '14px 16px' }}>
+              <div key={meal.id} className="meal-item" style={{ padding: '12px 14px' }}>
                 <div className="meal-item-left">
                   <div className="meal-item-name">{MEAL_ICONS[meal.type] || '🍿'} {meal.name}</div>
-                  <div className="meal-item-meta">
-                    {meal.type} · {meal.amount}g
-                    {meal.fiber > 0 && <span> · Ball: {meal.fiber}g</span>}
-                  </div>
+                  <div className="meal-item-meta">{meal.type} · {meal.amount}g</div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <div>
                     <div className="meal-item-cal">{Math.round(meal.calories)}</div>
-                    <div className="meal-item-meta">kcal · P: {meal.protein}g · K: {meal.carbs}g · F: {meal.fat}g</div>
+                    <div className="meal-item-meta">kcal</div>
                   </div>
-                  <button className="delete-btn" onClick={() => handleDelete(meal.id)}>✕</button>
+                  <button className="delete-btn" onClick={() => handleDeleteMeal(meal.id)}>✕</button>
                 </div>
               </div>
             ))}
@@ -150,7 +229,7 @@ export default function Dashboard({ token, logout }: Props) {
       <button className="fab" onClick={() => navigate('/add')}>+</button>
 
       <nav className="bottom-nav">
-        <button className="nav-item active">
+        <button className="nav-item active" onClick={() => {}}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
           Dashboard
         </button>
@@ -162,9 +241,9 @@ export default function Dashboard({ token, logout }: Props) {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
           Hinzufügen
         </button>
-        <button className="nav-item" onClick={() => navigate('/profile')}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-          Profil
+        <button className="nav-item" onClick={() => navigate('/favorites')}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          Favoriten
         </button>
       </nav>
     </div>
