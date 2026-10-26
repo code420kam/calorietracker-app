@@ -2,7 +2,7 @@ import type { User, Meal, DailyGoals } from '../types'
 
 export function getBaseURL() {
   // Use the deployed backend on Render
-  return 'https://ct-api-now.loca.lt/api'
+  return 'https://b48b37efb6a12a8a-92-208-234-195.serveousercontent.com/api'
 }
 
 export interface AuthResponse {
