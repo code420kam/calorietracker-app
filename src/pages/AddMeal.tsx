@@ -1,5 +1,5 @@
-import React, { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import React, { useState, useEffect } from 'react'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { addMeal, searchProducts } from '../stores/authStore'
 
 interface Props { token: string }
@@ -13,7 +13,8 @@ const MEAL_TYPES = [
 
 export default function AddMeal({ token }: Props) {
   const navigate = useNavigate()
-  const [tab, setTab] = useState<'search' | 'manual'>('search')
+  const location = useLocation()
+  const [tab, setTab] = useState<'search' | 'manual' | 'scan'>('search')
   const [search, setSearch] = useState('')
   const [results, setResults] = useState<{ name: string; calories: number; carbs: number; protein: number; fat: number; brand?: string }[]>([])
   const [searching, setSearching] = useState(false)
@@ -22,6 +23,25 @@ export default function AddMeal({ token }: Props) {
   const [form, setForm] = useState({ name: '', calories: '', carbs: '', protein: '', fat: '', fiber: '', amount: '100' })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+
+  // Prefill from barcode scan or search result
+  useEffect(() => {
+    const state = location.state as { prefill?: { name: string; calories: number; carbs: number; protein: number; fat: number; brand?: string } } | null
+    if (state?.prefill) {
+      const f = state.prefill
+      setForm({
+        name: f.name,
+        calories: String(f.calories),
+        carbs: String(f.carbs),
+        protein: String(f.protein),
+        fat: String(f.fat),
+        fiber: '',
+        amount: '100',
+      })
+      setTab('manual')
+      navigate(location.pathname, { replace: true })
+    }
+  }, [location.state, navigate, location.pathname])
 
   function update(field: string, value: string) {
     setForm(prev => ({ ...prev, [field]: value }))
@@ -84,7 +104,10 @@ export default function AddMeal({ token }: Props) {
       <div className="page-content">
         <div className="tabs">
           <button className={`tab ${tab === 'search' ? 'active' : ''}`} onClick={() => setTab('search')}>
-            🔍 Lebensmittel-Suche
+            🔍 Suche
+          </button>
+          <button className={`tab ${tab === 'scan' ? 'active' : ''}`} onClick={() => navigate('/scan')}>
+            📷 Scan
           </button>
           <button className={`tab ${tab === 'manual' ? 'active' : ''}`} onClick={() => setTab('manual')}>
             ✏️ Manuell
@@ -197,16 +220,16 @@ export default function AddMeal({ token }: Props) {
 
       <nav className="bottom-nav">
         <button className="nav-item" onClick={() => navigate('/dashboard')}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
           Dashboard
         </button>
-        <button className="nav-item" onClick={() => navigate('/history')}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-          Historie
-        </button>
-        <button className="nav-item active">
+        <button className="nav-item active" onClick={() => navigate('/add')}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
           Hinzufügen
+        </button>
+        <button className="nav-item" onClick={() => navigate('/history')}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          Verlauf
         </button>
         <button className="nav-item" onClick={() => navigate('/profile')}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
