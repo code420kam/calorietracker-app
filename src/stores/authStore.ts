@@ -2,7 +2,7 @@ import type { User, Meal, DailyGoals } from '../types'
 
 export function getBaseURL() {
   // Use the deployed backend on Render
-  return 'https://two-jars-work.loca.lt/api'
+  return 'https://tidy-birds-say.loca.lt/api'
 }
 
 export interface AuthResponse {
