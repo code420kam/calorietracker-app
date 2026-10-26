@@ -18,6 +18,7 @@ jobs:
           node-version: '20'
 
       - name: Install + Build
+        working-directory: .
         run: |
           npm ci
           npm run build
