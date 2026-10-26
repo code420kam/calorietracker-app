@@ -23,8 +23,11 @@ jobs:
           npm ci
           npm run build
 
+      - name: Setup Pages
+        run: git remote add origin https://github.com/code420kam/calorietracker-app.git
+
       - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v3
+        uses: JamesIves/github-pages-deploy-action@v4
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./dist
+          token: ${{ secrets.GITHUB_TOKEN }}
+          folder: dist
