@@ -98,4 +98,18 @@ html { scroll-behavior: smooth; }
 .empty-desc { font-size: 14px; color: #64748B; }
 .loading-row { display: flex; align-items: center; gap: 12px; padding: 12px 0; }
 .loading-bar { height: 16px; border-radius: 8px; }
-@media (max-width: 390px) { .kpi-grid { gap: 6px; } .kpi-value { font-size: 17px; } .kpi-label { font-size: 9px; } }
+.autocomplete-dropdown { position: absolute; top: calc(100% + 4px); left: 0; right: 0; background: white; border: 1.5px solid #E2E8F0; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.10); z-index: 200; overflow: hidden; }
+.autocomplete-item { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid #F1F5F9; cursor: pointer; transition: background 0.12s; }
+.autocomplete-item:last-child { border-bottom: none; }
+.autocomplete-item:hover { background: #F8FAFC; }
+.autocomplete-item-info { flex: 1; }
+.autocomplete-item-name { font-size: 14px; font-weight: 600; color: #172337; }
+.autocomplete-item-brand { font-size: 11px; color: #64748B; }
+.autocomplete-item-macros { font-size: 11px; color: #94A3B8; margin-top: 2px; }
+.autocomplete-item-kcal { font-size: 15px; font-weight: 700; color: #172337; text-align: right; margin-left: 12px; }
+.autocomplete-item-kcal span { display: block; font-size: 10px; font-weight: 400; color: #94A3B8; }
+.macro-pill { background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px; padding: 8px 12px; display: flex; justify-content: space-between; align-items: center; }
+.macro-pill-label { font-size: 12px; color: #64748B; font-weight: 600; }
+.macro-pill-value { font-size: 14px; font-weight: 700; color: #172337; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
