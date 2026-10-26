@@ -21,7 +21,7 @@ export default function App() {
         <Route path="/login" element={!token ? <Login onLogin={setToken} /> : <Navigate to="/dashboard" />} />
         <Route path="/dashboard" element={token ? <Dashboard token={token!} /> : <Navigate to="/login" />} />
         <Route path="/add" element={token ? <AddMeal token={token!} /> : <Navigate to="/login" />} />
-        <Route path="/history" element={token ? <History token={token!} /> : <Navigate to="/login" />} />
+        <Route path="/history" element={token ? <History /> : <Navigate to="/login" />} />
         <Route path="/profile" element={token ? <Profile token={token!} logout={logout} /> : <Navigate to="/login" />} />
         <Route path="*" element={<Navigate to={token ? "/dashboard" : "/login"} />} />
       </Routes>

@@ -2,9 +2,14 @@ export interface User {
   id: string
   name: string
   email: string
-  passwordHash: string
+  gender?: string
+  age?: number
+  height?: number
+  weight?: number
+  activityLevel?: string
+  tdee?: number
+  bmr?: number
   dailyGoals: DailyGoals
-  createdAt: number
 }
 
 export interface DailyGoals {
@@ -16,28 +21,26 @@ export interface DailyGoals {
 
 export interface Meal {
   id: string
-  userId: string
+  user_id: string
   name: string
   calories: number
   carbs: number
   protein: number
   fat: number
+  fiber: number
   amount: number
-  type: 'breakfast' | 'lunch' | 'dinner' | 'snack'
-  date: string // YYYY-MM-DD
-  createdAt: number
+  type: string
+  date: string
+  created_at: number
 }
 
 export interface FoodSearchResult {
-  id: string
   name: string
-  brand?: string
-  barcode?: string
   calories: number
   carbs: number
   protein: number
   fat: number
-  servingSize: number
+  brand?: string
 }
 
 export interface DailyTotals {
@@ -45,4 +48,5 @@ export interface DailyTotals {
   carbs: number
   protein: number
   fat: number
+  fiber: number
 }

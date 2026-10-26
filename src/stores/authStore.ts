@@ -1,14 +1,17 @@
-import { User, Meal, DailyGoals } from '../types'
+import type { User, Meal, DailyGoals } from '../types'
 
-const API_BASE = 'https://ct-api-now.loca.lt/api'
+export function getBaseURL() {
+  // Use the deployed backend on Render
+  return 'https://calorietracker-backend.onrender.com/api'
+}
 
 export interface AuthResponse {
   token: string
-  user: Omit<User, 'passwordHash'>
+  user: User
 }
 
 export async function login(email: string, password: string): Promise<AuthResponse> {
-  const res = await fetch(`${API_BASE}/auth/login`, {
+  const res = await fetch(`${getBaseURL()}/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password }),
@@ -20,11 +23,20 @@ export async function login(email: string, password: string): Promise<AuthRespon
   return res.json()
 }
 
-export async function register(name: string, email: string, password: string): Promise<AuthResponse> {
-  const res = await fetch(`${API_BASE}/auth/register`, {
+export async function register(data: {
+  name: string
+  email: string
+  password: string
+  gender?: string
+  age?: number
+  height?: number
+  weight?: number
+  activityLevel?: string
+}): Promise<AuthResponse> {
+  const res = await fetch(`${getBaseURL()}/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, email, password }),
+    body: JSON.stringify(data),
   })
   if (!res.ok) {
     const err = await res.json()
@@ -34,15 +46,25 @@ export async function register(name: string, email: string, password: string): P
 }
 
 export async function getMeals(token: string, date: string): Promise<Meal[]> {
-  const res = await fetch(`${API_BASE}/meals?date=${date}`, {
+  const res = await fetch(`${getBaseURL()}/meals?date=${date}`, {
     headers: { Authorization: `Bearer ${token}` },
   })
   if (!res.ok) throw new Error('Mahlzeiten konnten nicht geladen werden')
   return res.json()
 }
 
-export async function addMeal(token: string, meal: Omit<Meal, 'id' | 'createdAt'>): Promise<Meal> {
-  const res = await fetch(`${API_BASE}/meals`, {
+export async function addMeal(token: string, meal: {
+  name: string
+  calories: number
+  carbs: number
+  protein: number
+  fat: number
+  fiber: number
+  amount: number
+  type: string
+  date: string
+}): Promise<Meal> {
+  const res = await fetch(`${getBaseURL()}/meals`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify(meal),
@@ -52,7 +74,7 @@ export async function addMeal(token: string, meal: Omit<Meal, 'id' | 'createdAt'
 }
 
 export async function deleteMeal(token: string, id: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/meals/${id}`, {
+  const res = await fetch(`${getBaseURL()}/meals/${id}`, {
     method: 'DELETE',
     headers: { Authorization: `Bearer ${token}` },
   })
@@ -60,12 +82,28 @@ export async function deleteMeal(token: string, id: string): Promise<void> {
 }
 
 export async function updateGoals(token: string, goals: DailyGoals): Promise<void> {
-  const res = await fetch(`${API_BASE}/users/goals`, {
+  const res = await fetch(`${getBaseURL()}/users/goals`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify(goals),
   })
   if (!res.ok) throw new Error('Ziele konnten nicht aktualisiert werden')
+}
+
+export async function updateProfile(token: string, data: {
+  gender?: string
+  age?: number
+  height?: number
+  weight?: number
+  activityLevel?: string
+}): Promise<{ ok: boolean; tdee: number; bmr: number }> {
+  const res = await fetch(`${getBaseURL()}/users/profile`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) throw new Error('Profil konnte nicht aktualisiert werden')
+  return res.json()
 }
 
 export async function searchProducts(query: string): Promise<{ name: string; calories: number; carbs: number; protein: number; fat: number; brand?: string }[]> {

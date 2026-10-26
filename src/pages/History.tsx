@@ -1,58 +1,48 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getMeals, deleteMeal } from '../stores/authStore'
-import type { Meal } from '../types'
+import { getMeals } from '../stores/authStore'
+import type { Meal, User } from '../types'
 
-function fmtDate(d: string) {
-  const dt = new Date(d + 'T00:00:00')
-  const today = new Date().toISOString().split('T')[0]
-  const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1)
-  if (d === today) return 'Heute'
-  if (d === yesterday.toISOString().split('T')[0]) return 'Gestern'
-  return dt.toLocaleDateString('de-DE', { day: '2-digit', month: 'short' })
-}
+interface Props { logout: () => void }
 
-export default function History({ token }: { token: string }) {
+export default function History({ logout }: Props) {
   const navigate = useNavigate()
-  const [allMeals, setAllMeals] = useState<Meal[]>([])
+  const user: User = JSON.parse(localStorage.getItem('ct_user') || '{}')
+  const tdee = user.tdee || 2000
+  const [days, setDays] = useState<{ date: string; totals: { calories: number; carbs: number; protein: number; fat: number; fiber: number }; meals: Meal[] }[]>([])
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    loadWeek()
-  }, [token])
+  useEffect(() => { loadHistory() }, [])
 
-  async function loadWeek() {
+  async function loadHistory() {
     setLoading(true)
     try {
-      const days = 7
-      const meals: Meal[] = []
-      for (let i = 0; i < days; i++) {
+      const history: typeof days = []
+      for (let i = 0; i < 14; i++) {
         const d = new Date()
         d.setDate(d.getDate() - i)
         const dateStr = d.toISOString().split('T')[0]
-        const dayMeals = await getMeals(token, dateStr)
-        meals.push(...dayMeals)
+        const meals = await getMeals(token, dateStr)
+        if (meals.length > 0) {
+          const totals = meals.reduce((acc, m) => ({
+            calories: acc.calories + m.calories,
+            carbs: acc.carbs + m.carbs,
+            protein: acc.protein + m.protein,
+            fat: acc.fat + m.fat,
+            fiber: acc.fiber + (m.fiber || 0),
+          }), { calories: 0, carbs: 0, protein: 0, fat: 0, fiber: 0 })
+          history.push({ date: dateStr, totals, meals })
+        }
       }
-      setAllMeals(meals)
-    } catch { setAllMeals([]) }
+      setDays(history)
+    } catch {}
     setLoading(false)
   }
 
-  async function handleDelete(id: string) {
-    try {
-      await deleteMeal(token, id)
-      setAllMeals(prev => prev.filter(m => m.id !== id))
-    } catch {}
+  function fmtDate(d: string) {
+    const dt = new Date(d + 'T00:00:00')
+    return dt.toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: 'short' })
   }
-
-  // Group by date
-  const grouped: Record<string, Meal[]> = {}
-  allMeals.forEach(m => {
-    if (!grouped[m.date]) grouped[m.date] = []
-    grouped[m.date].push(m)
-  })
-
-  const sortedDates = Object.keys(grouped).sort((a, b) => b.localeCompare(a))
 
   return (
     <div className="page">
@@ -63,48 +53,52 @@ export default function History({ token }: { token: string }) {
       </div>
       <div className="page-content">
         {loading ? (
-          <div>
-            {[1,2,3,4,5].map(i => (
-              <div key={i} className="skeleton" style={{ height: 56, marginBottom: 8, borderRadius: 12 }} />
-            ))}
-          </div>
-        ) : sortedDates.length === 0 ? (
-          <div className="empty-state" style={{ marginTop: 60 }}>
+          <div style={{ textAlign: 'center', padding: 40, color: '#64748B' }}>Lädt...</div>
+        ) : days.length === 0 ? (
+          <div className="empty-state">
             <div className="empty-icon">📅</div>
             <div className="empty-title">Keine Einträge</div>
-            <div className="empty-desc">Deine Mahlzeiten werden hier angezeigt.</div>
+            <div className="empty-desc">Deine Mahlzeiten-Historie erscheint hier.</div>
           </div>
         ) : (
-          sortedDates.map(date => (
-            <div key={date} style={{ marginBottom: 24 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: '#64748B', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                {fmtDate(date)}
-              </div>
-              <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-                {grouped[date].map(meal => (
-                  <div key={meal.id} className="meal-item" style={{ padding: '14px 16px' }}>
-                    <div className="meal-item-left">
-                      <div className="meal-item-name">{meal.name}</div>
-                      <div className="meal-item-meta">
-                        {meal.type === 'breakfast' ? '🍳' : meal.type === 'lunch' ? '🍽️' : meal.type === 'dinner' ? '🍝' : '🍿'}{' '}
-                        {meal.type} · {meal.amount}g
-                      </div>
+          days.map(day => {
+            const balance = tdee - day.totals.calories
+            const isOver = balance < 0
+            return (
+              <div key={day.date} className="card" style={{ marginBottom: 12 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <span style={{ fontWeight: 700, fontSize: 15 }}>{fmtDate(day.date)}</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: isOver ? '#EF4444' : '#00CDBB' }}>
+                    {isOver ? `+${Math.abs(Math.round(day.totals.calories - tdee))} Über` : `${Math.round(day.totals.calories)} / ${tdee} kcal`}
+                  </span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 6, marginBottom: 8 }}>
+                  {[
+                    { label: 'Eiw', value: Math.round(day.totals.protein), unit: 'g' },
+                    { label: 'KH', value: Math.round(day.totals.carbs), unit: 'g' },
+                    { label: 'Fett', value: Math.round(day.totals.fat), unit: 'g' },
+                    { label: 'Ball', value: Math.round(day.totals.fiber * 10) / 10, unit: 'g' },
+                    { label: 'kcal', value: Math.round(day.totals.calories), unit: '' },
+                  ].map(m => (
+                    <div key={m.label} style={{ textAlign: 'center', background: '#0B1730', borderRadius: 8, padding: '6px 4px' }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: '#00CDBB' }}>{m.value}{m.unit}</div>
+                      <div style={{ fontSize: 10, color: '#64748B' }}>{m.label}</div>
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <div className="meal-item-right">
-                        <div className="meal-item-cal">{Math.round(meal.calories)} kcal</div>
-                      </div>
-                      <button className="delete-btn" onClick={() => handleDelete(meal.id)}>✕</button>
-                    </div>
+                  ))}
+                </div>
+                {day.meals.map(m => (
+                  <div key={m.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '4px 0', borderTop: '1px solid #1E293B' }}>
+                    <span style={{ color: '#94A3B8' }}>{m.name}</span>
+                    <span style={{ color: '#64748B' }}>P:{m.protein}g K:{m.carbs}g F:{m.fat}g {m.fiber > 0 ? `Ball:${m.fiber}g` : ''}</span>
+                    <span style={{ color: '#E2E8F0', fontWeight: 600 }}>{Math.round(m.calories)} kcal</span>
                   </div>
                 ))}
               </div>
-            </div>
-          ))
+            )
+          })
         )}
       </div>
 
-      {/* Bottom Nav */}
       <nav className="bottom-nav">
         <button className="nav-item" onClick={() => navigate('/dashboard')}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>

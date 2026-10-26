@@ -1,144 +1,156 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getMeals } from '../stores/authStore'
-import type { Meal, DailyGoals } from '../types'
+import { getMeals, deleteMeal } from '../stores/authStore'
+import type { Meal, User } from '../types'
 
-function fmt(n: number) { return n.toFixed(1) }
+interface Props { token: string; logout: () => void }
 
-function ProgressBar(current: number, goal: number, color = '#00CDBB') {
-  const pct = Math.min((current / goal) * 100, 100)
-  return (
-    <div className="progress-bar">
-      <div className={`progress-fill ${current > goal ? 'over' : ''}`} style={{ width: `${pct}%`, background: color }} />
-    </div>
-  )
-}
+const MEAL_ICONS: Record<string, string> = { breakfast: '🍳', lunch: '🍽️', dinner: '🍝', snack: '🍿' }
 
-function todayStr() { return new Date().toISOString().split('T')[0] }
-
-export default function Dashboard({ token }: { token: string }) {
+export default function Dashboard({ token, logout }: Props) {
   const navigate = useNavigate()
+  const user: User = JSON.parse(localStorage.getItem('ct_user') || '{}')
+  const tdee = user.tdee || 2000
+  const [date, setDate] = useState(() => new Date().toISOString().split('T')[0])
   const [meals, setMeals] = useState<Meal[]>([])
   const [loading, setLoading] = useState(true)
-  const [date, setDate] = useState(todayStr())
-  const user = JSON.parse(localStorage.getItem('ct_user') || '{}')
 
-  const goals: DailyGoals = { calories: 2000, carbs: 250, protein: 100, fat: 70 }
-  const userGoals: DailyGoals = (user as { dailyGoals?: DailyGoals }).dailyGoals || goals
+  useEffect(() => { loadMeals() }, [date])
+
+  async function loadMeals() {
+    setLoading(true)
+    try { setMeals(await getMeals(token, date)) } catch { setMeals([]) }
+    setLoading(false)
+  }
+
+  async function handleDelete(id: string) {
+    try { await deleteMeal(token, id); setMeals(prev => prev.filter(m => m.id !== id)) } catch {}
+  }
 
   const totals = meals.reduce((acc, m) => ({
     calories: acc.calories + m.calories,
     carbs: acc.carbs + m.carbs,
     protein: acc.protein + m.protein,
     fat: acc.fat + m.fat,
-  }), { calories: 0, carbs: 0, protein: 0, fat: 0 })
+    fiber: acc.fiber + (m.fiber || 0),
+  }), { calories: 0, carbs: 0, protein: 0, fat: 0, fiber: 0 })
 
-  function changeDate(d: number) {
-    const dt = new Date(date)
-    dt.setDate(dt.getDate() + d)
-    setDate(dt.toISOString().split('T')[0])
+  const calBalance = tdee - totals.calories
+  const calPercent = Math.min(100, Math.round((totals.calories / tdee) * 100))
+  const isOver = calBalance < 0
+
+  const fmtDate = (d: string) => {
+    const dt = new Date(d + 'T00:00:00')
+    const today = new Date().toISOString().split('T')[0]
+    if (d === today) return 'Heute'
+    return dt.toLocaleDateString('de-DE', { day: '2-digit', month: 'short' })
   }
 
-  useEffect(() => {
-    setLoading(true)
-    getMeals(token, date).then(setMeals).catch(() => setMeals([])).finally(() => setLoading(false))
-  }, [token, date])
-
-  const greeting = () => {
-    const h = new Date().getHours()
-    if (h < 12) return 'Guten Morgen'
-    if (h < 18) return 'Guten Tag'
-    return 'Guten Abend'
-  }
-
-  const dateLabel = () => {
-    const d = new Date(date + 'T00:00:00')
-    const today = todayStr()
-    if (date === today) return 'Heute'
-    const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1)
-    if (date === yesterday.toISOString().split('T')[0]) return 'Gestern'
-    return d.toLocaleDateString('de-DE', { day: '2-digit', month: 'short' })
-  }
-
-  const kpiItems = [
-    { label: 'kcal', value: totals.calories, goal: userGoals.calories, unit: '' },
-    { label: 'KH', value: totals.carbs, goal: userGoals.carbs, unit: 'g' },
-    { label: 'Eiweiß', value: totals.protein, goal: userGoals.protein, unit: 'g' },
-    { label: 'Fett', value: totals.fat, goal: userGoals.fat, unit: 'g' },
-  ]
+  function prevDay() { const d = new Date(date); d.setDate(d.getDate() - 1); setDate(d.toISOString().split('T')[0]) }
+  function nextDay() { const d = new Date(date); d.setDate(d.getDate() + 1); setDate(d.toISOString().split('T')[0]) }
+  function today() { setDate(new Date().toISOString().split('T')[0]) }
 
   return (
     <div className="page">
       <div className="header-bar">
-        <div>
-          <h1>{greeting()}, {user.name?.split(' ')[0] || '👋'}</h1>
-        </div>
-        <button onClick={() => navigate('/profile')} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', fontSize: 20 }}>
-          {(user.name || 'U').charAt(0).toUpperCase()}
-        </button>
+        <h1>CalorieTrack</h1>
+        <button className="back" onClick={logout} style={{ fontSize: 13 }}>Abmelden</button>
       </div>
 
       <div className="page-content">
-        {/* Date Nav */}
-        <div className="date-nav">
-          <button className="date-btn" onClick={() => changeDate(-1)}>‹</button>
-          <span className="date-display">{dateLabel()}</span>
-          <button className="date-btn" onClick={() => changeDate(1)} disabled={date >= todayStr()}>›</button>
+        {/* User + TDEE Card */}
+        <div className="card" style={{ background: '#0B1730', color: 'white', marginBottom: 16 }}>
+          <div style={{ fontSize: 13, color: '#94A3B8', marginBottom: 4 }}>Tagesbedarf (TDEE)</div>
+          <div style={{ fontSize: 32, fontWeight: 800, color: '#00CDBB' }}>{tdee} kcal</div>
+          <div style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>
+            Grundumsatz: {user.bmr || '—'} kcal · Aktivität: {user.activityLevel === 'sedentary' ? 'Sitzend' : user.activityLevel === 'light' ? 'Leicht' : user.activityLevel === 'moderate' ? 'Moderat' : user.activityLevel === 'active' ? 'Aktiv' : 'Sehr aktiv'}
+          </div>
         </div>
 
-        {/* KPI Grid */}
-        <div className="kpi-grid">
-          {kpiItems.map(item => (
-            <div key={item.label} className="kpi-card">
-              <div style={{ fontSize: 20, fontWeight: 800, color: item.value > item.goal && item.goal > 0 ? '#DC2626' : '#172337' }}>
-                {fmt(item.value)}{item.unit}
+        {/* Date Nav */}
+        <div className="date-nav">
+          <button className="date-btn" onClick={prevDay}>‹</button>
+          <button className="date-display" onClick={today}>{fmtDate(date)}</button>
+          <button className="date-btn" onClick={nextDay}>›</button>
+        </div>
+
+        {/* Calorie Progress */}
+        <div className="card">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <span style={{ fontSize: 15, fontWeight: 700 }}>Kalorien</span>
+            <span style={{ fontSize: 15, fontWeight: 700, color: isOver ? '#EF4444' : '#00CDBB' }}>
+              {Math.round(totals.calories)} / {tdee} kcal
+            </span>
+          </div>
+          <div className="progress-bar" style={{ height: 12 }}>
+            <div className="progress-fill" style={{
+              width: `${calPercent}%`,
+              background: isOver ? '#EF4444' : calPercent > 80 ? '#F59E0B' : '#00CDBB'
+            }} />
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, fontSize: 12, color: '#64748B' }}>
+            <span>{calPercent}% verbraucht</span>
+            <span style={{ color: isOver ? '#EF4444' : '#00CDBB', fontWeight: 700 }}>
+              {isOver ? `+${Math.abs(Math.round(calBalance))} kcal Über` : `${Math.round(calBalance)} kcal übrig`}
+            </span>
+          </div>
+        </div>
+
+        {/* Macro Grid */}
+        <div className="kpi-grid" style={{ marginBottom: 16 }}>
+          {[
+            { label: 'Eiw.', value: Math.round(totals.protein), unit: 'g', target: user.dailyGoals?.protein || 100 },
+            { label: 'Kohlenhydr.', value: Math.round(totals.carbs), unit: 'g', target: user.dailyGoals?.carbs || 250 },
+            { label: 'Fett', value: Math.round(totals.fat), unit: 'g', target: user.dailyGoals?.fat || 70 },
+            { label: 'Ballastst.', value: Math.round(totals.fiber * 10) / 10, unit: 'g', target: 30 },
+          ].map(m => (
+            <div key={m.label} className="kpi-card">
+              <div className="kpi-value">{m.value}<span style={{ fontSize: 11, fontWeight: 400 }}>{m.unit}</span></div>
+              <div className="kpi-label">{m.label}</div>
+              <div className="progress-bar" style={{ marginTop: 4 }}>
+                <div className="progress-fill" style={{ width: `${Math.min(100, (m.value / m.target) * 100)}%` }} />
               </div>
-              {ProgressBar(item.value, item.goal)}
-              <div className="kpi-label">{item.label}</div>
-              <div className="kpi-sub">von {item.goal}{item.unit}</div>
             </div>
           ))}
         </div>
 
-        {/* Recent Meals */}
-        <div className="card">
-          <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span>Mahzeiten</span>
-            <button className="link-btn" onClick={() => navigate('/history')}>Alle</button>
+        {/* Meals */}
+        {loading ? (
+          <div>{[1,2].map(i => <div key={i} className="skeleton" style={{ height: 56, marginBottom: 8, borderRadius: 12 }} />)}</div>
+        ) : meals.length === 0 ? (
+          <div className="empty-state">
+            <div className="empty-icon">🍽️</div>
+            <div className="empty-title">Keine Mahlzeiten</div>
+            <div className="empty-desc">Füge Mahlzeiten für diesen Tag hinzu.</div>
           </div>
-          {loading ? (
-            <div>
-              {[1,2,3].map(i => <div key={i} className="skeleton" style={{ height: 48, marginBottom: 8, borderRadius: 8 }} />)}
-            </div>
-          ) : meals.length === 0 ? (
-            <div className="empty-state">
-              <div className="empty-icon">🍽️</div>
-              <div className="empty-title">Noch keine Mahlzeiten</div>
-              <div className="empty-desc">Füge heute etwas hinzu</div>
-            </div>
-          ) : (
-            meals.slice(0, 5).map(meal => (
-              <div key={meal.id} className="meal-item">
+        ) : (
+          <div className="card" style={{ padding: 0 }}>
+            {meals.map(meal => (
+              <div key={meal.id} className="meal-item" style={{ padding: '14px 16px' }}>
                 <div className="meal-item-left">
-                  <div className="meal-item-name">{meal.name}</div>
-                  <div className="meal-item-meta">{meal.type === 'breakfast' ? '🍳' : meal.type === 'lunch' ? '🍽️' : meal.type === 'dinner' ? '🍝' : '🍿'} {meal.type}</div>
+                  <div className="meal-item-name">{MEAL_ICONS[meal.type] || '🍿'} {meal.name}</div>
+                  <div className="meal-item-meta">
+                    {meal.type} · {meal.amount}g
+                    {meal.fiber > 0 && <span> · Ball: {meal.fiber}g</span>}
+                  </div>
                 </div>
-                <div className="meal-item-right">
-                  <div className="meal-item-cal">{Math.round(meal.calories)} kcal</div>
-                  <div className="meal-item-unit">{meal.amount}g</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div>
+                    <div className="meal-item-cal">{Math.round(meal.calories)}</div>
+                    <div className="meal-item-meta">kcal · P: {meal.protein}g · K: {meal.carbs}g · F: {meal.fat}g</div>
+                  </div>
+                  <button className="delete-btn" onClick={() => handleDelete(meal.id)}>✕</button>
                 </div>
               </div>
-            ))
-          )}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
 
-      {/* FAB */}
       <button className="fab" onClick={() => navigate('/add')}>+</button>
 
-      {/* Bottom Nav */}
       <nav className="bottom-nav">
-        <button className="nav-item active" onClick={() => navigate('/dashboard')}>
+        <button className="nav-item active">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
           Dashboard
         </button>
