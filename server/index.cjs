@@ -518,3 +518,11 @@ Erkannte Lebensmittel (max 6):`
 // ─── Health ──────────────────────────────────────────────────────────────────
 
 app.get('/health', (req, res) => res.json({ status: 'ok', ts: Date.now() }))
+
+const server = app.listen(PORT, '0.0.0.0', () => {
+  console.log('CT API running on port ' + PORT)
+})
+
+process.stdin.resume()
+process.on('SIGTERM', () => { server.close(() => process.exit(0)) })
+process.on('SIGHUP', () => process.exit(0))
