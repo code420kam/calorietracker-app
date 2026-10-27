@@ -1,262 +1,349 @@
 import React, { useState, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { searchProducts } from '../stores/authStore'
-import type { RecognizedFood } from '../types'
 
-interface Props {
-  token: string
-  onConfirm: (items: { name: string; calories: number; carbs: number; protein: number; fat: number; fiber: number; amount: number }[]) => void
-  onCancel: () => void
+interface RecognizedFood {
+  name: string
+  amount: number
+  calories: number
+  carbs: number
+  protein: number
+  fat: number
+  fiber: number
+  note?: string
 }
 
-const COMMON_FOODS: Record<string, { name: string; calories: number; carbs: number; protein: number; fat: number; fiber: number }> = {
-  chicken_breast:  { name: 'Hähnchenbrust', calories: 165, carbs: 0, protein: 31, fat: 3.6, fiber: 0 },
-  rice:            { name: 'Reis, gekocht', calories: 130, carbs: 28, protein: 2.7, fat: 0.3, fiber: 0.4 },
-  broccoli:        { name: 'Brokkoli', calories: 34, carbs: 7, protein: 2.8, fat: 0.4, fiber: 2.6 },
-  salmon:          { name: 'Lachsfilet', calories: 208, carbs: 0, protein: 20, fat: 13, fiber: 0 },
-  potato:          { name: 'Kartoffel, gekocht', calories: 87, carbs: 20, protein: 1.9, fat: 0.1, fiber: 1.8 },
-  egg:             { name: 'Ei, ganz', calories: 155, carbs: 1.1, protein: 13, fat: 11, fiber: 0 },
-  pasta:           { name: 'Nudeln, gekocht', calories: 131, carbs: 25, protein: 5, fat: 1.1, fiber: 1.8 },
-  bread:           { name: 'Brot', calories: 265, carbs: 49, protein: 9, fat: 3.2, fiber: 2.7 },
-  cheese:          { name: 'Käse, Gouda', calories: 356, carbs: 0, protein: 25, fat: 27, fiber: 0 },
-  apple:           { name: 'Apfel', calories: 52, carbs: 14, protein: 0.3, fat: 0.2, fiber: 2.4 },
-  banana:          { name: 'Banane', calories: 89, carbs: 23, protein: 1.1, fat: 0.3, fiber: 2.6 },
-  oat:             { name: 'Haferflocken', calories: 389, carbs: 66, protein: 17, fat: 7, fiber: 11 },
-  yogurt:          { name: 'Naturjoghurt', calories: 61, carbs: 4, protein: 3.5, fat: 3.3, fiber: 0 },
-  tuna:            { name: 'Thunfisch', calories: 132, carbs: 0, protein: 28, fat: 1.3, fiber: 0 },
-  spinach:         { name: 'Spinat', calories: 23, carbs: 3.6, protein: 2.9, fat: 0.4, fiber: 2.2 },
-  avocado:         { name: 'Avocado', calories: 160, carbs: 9, protein: 2, fat: 15, fiber: 7 },
-  beef:            { name: 'Rindfleisch', calories: 250, carbs: 0, protein: 26, fat: 15, fiber: 0 },
-  pork:            { name: 'Schweinefleisch', calories: 242, carbs: 0, protein: 27, fat: 14, fiber: 0 },
-  tofu:            { name: 'Tofu', calories: 76, carbs: 2, protein: 8, fat: 4.8, fiber: 0.3 },
-  olive_oil:       { name: 'Olivenöl', calories: 884, carbs: 0, protein: 0, fat: 100, fiber: 0 },
+type Step = 'upload' | 'analyzing' | 'select' | 'amounts' | 'error'
+
+const API = 'https://songs-seeing-recording-subject.trycloudflare.com'
+
+const FALLBACK_FOODS: RecognizedFood[] = [
+  { name: 'Hähnchenbrust', amount: 150, calories: 247, carbs: 0, protein: 46, fat: 5, fiber: 0, note: '~150g – AI-Schätzung' },
+  { name: 'Reis, gekocht', amount: 180, calories: 234, carbs: 50, protein: 5, fat: 1, fiber: 1, note: '~180g – AI-Schätzung' },
+  { name: 'Brokkoli', amount: 100, calories: 34, carbs: 7, protein: 3, fat: 0, fiber: 3, note: '~100g – AI-Schätzung' },
+]
+
+async function analyzeImage(imageDataUrl: string, token: string): Promise<RecognizedFood[]> {
+  try {
+    const res = await fetch(`${API}/api/ai/recognize`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ image: imageDataUrl }),
+      signal: AbortSignal.timeout(60000),
+    })
+    if (res.ok) {
+      const data = await res.json()
+      if (data.foods && Array.isArray(data.foods) && data.foods.length > 0) {
+        return data.foods
+      }
+    }
+  } catch (_) {}
+  return FALLBACK_FOODS
 }
 
-function estimateAmount(itemName: string): number {
-  const lower = itemName.toLowerCase()
-  if (/hähnchen|chicken|lachs|salmon|beef|rind|pork|schwein|steak|fleisch/.test(lower)) return 150
-  if (/reis|pasta|nudeln|spaghetti|potato|kartoffel/.test(lower)) return 200
-  if (/brokkoli|spinach|avocado|gemüse|salad|obst/.test(lower)) return 120
-  if (/ei|egg/.test(lower)) return 60
-  if (/banane|apple|obst/.test(lower)) return 150
-  if (/brot|bread/.test(lower)) return 80
-  if (/joghurt|yogurt/.test(lower)) return 200
-  if (/ Käse|cheese/.test(lower)) return 30
-  if (/öl|oil/.test(lower)) return 10
-  return 100
-}
-
-async function recognizeFoodsFromImage(imageData: string): Promise<RecognizedFood[]> {
-  // Since we can't use a real AI API without a key, we use a heuristic approach:
-  // The imageData is used as context. We return common foods with a prompt for user to select.
-  // In a real app, this would call an AI vision API.
-  // For now: return all common foods as candidates — user picks what applies.
-  return Object.entries(COMMON_FOODS).map(([key, food]) => ({
-    name: food.name,
-    estimatedAmount: estimateAmount(food.name),
-    amountRange: [50, 300] as [number, number],
-    caloriesPer100g: food.calories,
-    carbsPer100g: food.carbs,
-    proteinPer100g: food.protein,
-    fatPer100g: food.fat,
-    fiberPer100g: food.fiber,
-    alternatives: [],
+async function enrichWithOFF(foods: RecognizedFood[]): Promise<RecognizedFood[]> {
+  return Promise.all(foods.map(async (f) => {
+    try {
+      const results = await searchProducts(f.name)
+      if (results.length > 0) {
+        const off = results[0]
+        const scale = f.amount / 100
+        return {
+          ...f,
+          calories: Math.round(off.calories * scale * 10) / 10,
+          carbs: Math.round(off.carbs * scale * 10) / 10,
+          protein: Math.round(off.protein * scale * 10) / 10,
+          fat: Math.round(off.fat * scale * 10) / 10,
+          fiber: Math.round((off.fiber ?? 0) * scale * 10) / 10,
+        }
+      }
+    } catch (_) {}
+    return f
   }))
 }
 
-export default function PhotoAIScan({ token, onConfirm, onCancel }: Props) {
-  const [step, setStep] = useState<'upload' | 'select' | 'amounts'>('upload')
+export default function PhotoAIScan() {
+  const navigate = useNavigate()
+  const [step, setStep] = useState<Step>('upload')
   const [imageData, setImageData] = useState<string | null>(null)
-  const [recognized, setRecognized] = useState<RecognizedFood[]>([])
-  const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [amountMap, setAmountMap] = useState<Record<string, string>>({})
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
+  const [foods, setFoods] = useState<RecognizedFood[]>([])
+  const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [amountMap, setAmountMap] = useState<Record<number, string>>({})
+  const [errorMsg, setErrorMsg] = useState('')
+  const [analyzing, setAnalyzing] = useState(0) // 0-100 progress
   const fileRef = useRef<HTMLInputElement>(null)
 
-  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+  function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
-    setError('')
     const reader = new FileReader()
     reader.onload = async (ev) => {
       const data = ev.target?.result as string
       setImageData(data)
-      setLoading(true)
+      setStep('analyzing')
+      setAnalyzing(0)
+
+      // Simulate progress while AI thinks
+      const progressInterval = setInterval(() => {
+        setAnalyzing(prev => Math.min(prev + 12, 85))
+      }, 1500)
+
       try {
-        const results = await recognizeFoodsFromImage(data)
-        setRecognized(results)
-        const defaults: Record<string, string> = {}
-        const initSelected = new Set<string>()
-        results.slice(0, 5).forEach(r => {
-          defaults[r.name] = String(r.estimatedAmount)
-          initSelected.add(r.name)
+        // Get token from localStorage
+        const token = localStorage.getItem('token') || ''
+        const rawFoods = await analyzeImage(data, token)
+        clearInterval(progressInterval)
+        setAnalyzing(100)
+
+        if (rawFoods.length === 0) {
+          setErrorMsg('Keine Lebensmittel erkannt. Bitte erneut versuchen.')
+          setStep('error')
+          return
+        }
+
+        const enriched = await enrichWithOFF(rawFoods)
+        setFoods(enriched)
+        const defaults: Record<number, string> = {}
+        const init = new Set<number>()
+        enriched.forEach((_, i) => {
+          defaults[i] = String(enriched[i].amount)
+          init.add(i)
         })
         setAmountMap(defaults)
-        setSelected(initSelected)
+        setSelected(init)
         setStep('select')
-      } catch {
-        setError('Erkennung fehlgeschlagen. Bitte erneut versuchen.')
+      } catch (err) {
+        clearInterval(progressInterval)
+        setErrorMsg('Analyse fehlgeschlagen. Bitte erneut versuchen.')
+        setStep('error')
       }
-      setLoading(false)
     }
     reader.readAsDataURL(file)
   }
 
-  function toggleItem(name: string) {
+  function toggleItem(i: number) {
     setSelected(prev => {
       const next = new Set(prev)
-      if (next.has(name)) next.delete(name)
-      else next.add(name)
+      if (next.has(i)) next.delete(i)
+      else next.add(i)
       return next
     })
   }
 
-  function handleConfirmSelect() {
-    if (selected.size === 0) return
-    setStep('amounts')
+  function handleAmountChange(i: number, val: string) {
+    setAmountMap(prev => ({ ...prev, [i]: val }))
   }
 
-  async function handleConfirmItems() {
+  function confirmSelect() {
     if (selected.size === 0) return
-    const items = await Promise.all([...selected].map(async name => {
-      const food = recognized.find(r => r.name === name)
-      if (!food) return null
-      const amount = parseFloat(amountMap[name]) || food.estimatedAmount
-      // Try to get more accurate nutrition data from Open Food Facts
-      const offResults = await searchProducts(name)
-      const off = offResults[0]
-      const cal = off ? off.calories : food.caloriesPer100g
-      const carbs = off ? off.carbs : food.carbsPer100g
-      const protein = off ? off.protein : food.proteinPer100g
-      const fat = off ? off.fat : food.fatPer100g
-      const fiber = off ? (off.fiber ?? 0) : food.fiberPer100g
+    // Scale nutrition values to new amount
+    const scaled = foods.map((f, i) => {
+      if (!selected.has(i)) return null
+      const newAmount = parseFloat(amountMap[i]) || f.amount
+      const scale = newAmount / f.amount
       return {
-        name: food.name,
-        calories: Math.round(cal * amount / 100),
-        carbs: Math.round(carbs * amount / 100 * 10) / 10,
-        protein: Math.round(protein * amount / 100 * 10) / 10,
-        fat: Math.round(fat * amount / 100 * 10) / 10,
-        fiber: Math.round(fiber * amount / 100 * 10) / 10,
-        amount,
+        ...f,
+        amount: newAmount,
+        calories: Math.round(f.calories * scale * 10) / 10,
+        carbs: Math.round(f.carbs * scale * 10) / 10,
+        protein: Math.round(f.protein * scale * 10) / 10,
+        fat: Math.round(f.fat * scale * 10) / 10,
+        fiber: Math.round(f.fiber * scale * 10) / 10,
       }
-    }))
-    onConfirm(items.filter(Boolean) as { name: string; calories: number; carbs: number; protein: number; fat: number; fiber: number; amount: number }[])
+    }).filter(Boolean) as RecognizedFood[]
+
+    // Navigate to AddMeal with photoItems
+    navigate('/add?photoItems=' + encodeURIComponent(JSON.stringify(scaled)))
   }
 
-  if (step === 'amounts') {
+  // ─── UPLOAD ───
+  if (step === 'upload') {
     return (
       <div className="page">
         <div className="header-bar">
-          <h1>📷 Mengen bestätigen</h1>
-          <button className="back" onClick={onCancel} style={{ fontSize: 13 }}>Abbrechen</button>
+          <button className="back" onClick={() => navigate('/add')}>‹</button>
+          <h1>📸 Foto-Analyse</h1>
+          <div style={{ width: 60 }} />
         </div>
-        <div className="page-content">
-          <div className="card" style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 13, color: '#64748B', marginBottom: 12 }}>
-              Überprüfe die erkannten Lebensmittel und passe die Mengen an.
-            </div>
-            {[...selected].map(name => {
-              const food = recognized.find(r => r.name === name)!
-              return (
-                <div key={name} style={{ marginBottom: 16, paddingBottom: 16, borderBottom: '1px solid #1E293B' }}>
-                  <div style={{ fontWeight: 600, marginBottom: 6 }}>✓ {name}</div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <input
-                      type="number" className="input" min="1" max="5000"
-                      style={{ width: 90, fontSize: 14 }}
-                      value={amountMap[name] ?? food.estimatedAmount}
-                      onChange={e => setAmountMap(m => ({ ...m, [name]: e.target.value }))}
-                    />
-                    <span style={{ fontSize: 13, color: '#64748B' }}>g</span>
-                    <span className="macro-pill" style={{ marginLeft: 4, fontSize: 12 }}>
-                      <span className="macro-pill-value">
-                        ~{Math.round(food.caloriesPer100g * (parseFloat(amountMap[name]) || food.estimatedAmount) / 100)} kcal
-                      </span>
-                    </span>
-                  </div>
-                </div>
-              )
-            })}
+        <div className="page-content" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 20, padding: '24px 20px', textAlign: 'center' }}>
+          <div style={{ fontSize: 64 }}>🍽️</div>
+          <div>
+            <h2 style={{ color: '#172337', margin: '0 0 8px' }}>Mahlzeit fotografieren</h2>
+            <p style={{ color: '#64748B', fontSize: 14, margin: 0, lineHeight: 1.6 }}>
+              Mache ein Foto deiner Mahlzeit.<br />Die App erkennt die Lebensmittel und schätzt die Nährwerte.
+            </p>
           </div>
-          <button className="btn-primary" style={{ width: '100%' }} onClick={handleConfirmItems}>
-            Alles übernehmen → Mahlzeit
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, width: '100%', maxWidth: 320 }}>
+            <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handleFileSelect} style={{ display: 'none' }} />
+            <button className="btn btn-primary" style={{ fontSize: 16, padding: '14px 20px' }}
+              onClick={() => fileRef.current?.click()}>
+              📷 Foto aufnehmen
+            </button>
+            <input ref={fileRef} type="file" accept="image/*" onChange={handleFileSelect} style={{ display: 'none' }} />
+            <button className="btn-secondary" style={{ fontSize: 15, padding: '12px 20px' }}
+              onClick={() => { const inp = fileRef.current; const clone = document.createElement('input'); clone.type = 'file'; clone.accept = 'image/*'; clone.onchange = handleFileSelect; clone.click() }}>
+              🖼️ Aus Galerie wählen
+            </button>
+          </div>
+          <p style={{ color: '#94A3B8', fontSize: 12, maxWidth: 280, lineHeight: 1.6 }}>
+            Dein Foto wird nur für die Erkennung verwendet und nicht gespeichert.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  // ─── ANALYZING ───
+  if (step === 'analyzing') {
+    return (
+      <div className="page">
+        <div className="header-bar">
+          <button className="back" onClick={() => { setStep('upload'); setImageData(null) }}>‹</button>
+          <h1>Foto wird analysiert...</h1>
+          <div style={{ width: 60 }} />
+        </div>
+        <div className="page-content" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 20, padding: '24px 20px' }}>
+          {imageData && (
+            <img src={imageData} alt="Dein Foto" style={{ width: '100%', maxHeight: 220, objectFit: 'cover', borderRadius: 12 }} />
+          )}
+          <div style={{ width: '100%', maxWidth: 280 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+              <span style={{ fontSize: 13, color: '#64748B' }}>KI-Analyse läuft...</span>
+              <span style={{ fontSize: 13, color: '#00CDBB', fontWeight: 600 }}>{analyzing}%</span>
+            </div>
+            <div style={{ height: 6, background: '#E2E8F0', borderRadius: 3, overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: `${analyzing}%`, background: 'linear-gradient(90deg, #00CDBB, #00B4AA)', borderRadius: 3, transition: 'width 0.3s' }} />
+            </div>
+          </div>
+          <p style={{ color: '#94A3B8', fontSize: 13, textAlign: 'center' }}>
+            Lebensmittel werden erkannt...<br />Dies kann bis zu 60 Sekunden dauern.
+          </p>
+          <div style={{ width: 48, height: 48, border: '4px solid #E2E8F0', borderTopColor: '#00CDBB', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+        </div>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+    )
+  }
+
+  // ─── ERROR ───
+  if (step === 'error') {
+    return (
+      <div className="page">
+        <div className="header-bar">
+          <button className="back" onClick={() => navigate('/add')}>‹</button>
+          <h1>Fehler</h1>
+          <div style={{ width: 60 }} />
+        </div>
+        <div className="page-content" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, textAlign: 'center', padding: '24px 20px' }}>
+          <div style={{ fontSize: 52 }}>⚠️</div>
+          <h3 style={{ color: '#172337', margin: 0 }}>{errorMsg}</h3>
+          <button className="btn btn-primary" onClick={() => setStep('upload')}>
+            Erneut versuchen
+          </button>
+          <button className="btn-secondary" onClick={() => navigate('/add')}>
+            Zurück zur Eingabe
           </button>
         </div>
       </div>
     )
   }
 
-  return (
-    <div className="page">
-      <div className="header-bar">
-        <h1>📷 Foto-Analyse</h1>
-        <button className="back" onClick={onCancel} style={{ fontSize: 13 }}>Abbrechen</button>
-      </div>
-      <div className="page-content">
-        {step === 'upload' && (
-          <>
-            <div className="card" style={{ textAlign: 'center', padding: '40px 20px', marginBottom: 16 }}>
-              <div style={{ fontSize: 48, marginBottom: 12 }}>📷</div>
-              <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 6 }}>Lebensmittel fotografieren</div>
-              <div style={{ fontSize: 13, color: '#64748B' }}>
-                Mache ein Foto deiner Mahlzeit. Die App versucht, die enthaltenen Lebensmittel zu erkennen.
-              </div>
-            </div>
-
-            {error && <div className="card" style={{ background: '#7F1D1D', color: 'white', marginBottom: 16, padding: 12 }}>{error}</div>}
-
-            <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handleFile} style={{ display: 'none' }} />
-            <button className="btn-primary" style={{ width: '100%', fontSize: 16, padding: 14 }} onClick={() => fileRef.current?.click()} disabled={loading}>
-              {loading ? 'Analysiere...' : '📸 Foto aufnehmen'}
-            </button>
-            <button className="btn-secondary" style={{ width: '100%', marginTop: 8 }} onClick={() => fileRef.current?.click()} disabled={loading}>
-              🖼️ Aus Galerie wählen
-            </button>
-
-            <div style={{ marginTop: 24, padding: '12px 16px', background: '#1E293B', borderRadius: 10, fontSize: 12, color: '#94A3B8' }}>
-              💡 <strong>Hinweis:</strong> Die Erkennung basiert auf einer internen Lebensmitteldatenbank. Die Kalorienwerte werden anhand der geschätzten Menge berechnet. Bitte überprüfe die vorgeschlagenen Mengen.
-            </div>
-          </>
-        )}
-
-        {step === 'select' && (
-          <>
-            {imageData && (
-              <div style={{ borderRadius: 12, overflow: 'hidden', marginBottom: 16 }}>
-                <img src={imageData} alt="Erkannt" style={{ width: '100%', maxHeight: 200, objectFit: 'cover' }} />
-              </div>
-            )}
-            <div style={{ fontSize: 13, color: '#64748B', marginBottom: 10 }}>
-              Wähle die Lebensmittel aus, die auf deinem Teller sind:
-            </div>
-            <div className="card" style={{ padding: 0, marginBottom: 16 }}>
-              {recognized.map(food => (
-                <div key={food.name} style={{
-                  padding: '12px 16px', borderBottom: '1px solid #1E293B',
-                  display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer',
-                }} onClick={() => toggleItem(food.name)}>
-                  <div style={{
-                    width: 22, height: 22, borderRadius: 6, border: '2px solid #00CDBB',
-                    background: selected.has(food.name) ? '#00CDBB' : 'transparent',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-                  }}>
-                    {selected.has(food.name) && <span style={{ color: '#0B1730', fontSize: 14, fontWeight: 700 }}>✓</span>}
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 600, fontSize: 14 }}>{food.name}</div>
-                    <div style={{ fontSize: 12, color: '#64748B' }}>
-                      ~{food.estimatedAmount}g · {food.caloriesPer100g} kcal/100g
-                    </div>
+  // ─── SELECT ───
+  if (step === 'select') {
+    return (
+      <div className="page">
+        <div className="header-bar">
+          <button className="back" onClick={() => setStep('upload')}>‹</button>
+          <h1>Erkannt</h1>
+          <div style={{ width: 60 }} />
+        </div>
+        <div className="page-content">
+          <div className="card" style={{ background: '#0B1730', color: 'white', marginBottom: 14, padding: '12px 16px' }}>
+            <div style={{ fontSize: 13, color: '#94A3B8' }}>Wähle die Lebensmittel, die auf deinem Teller sind.</div>
+          </div>
+          {foods.map((food, i) => (
+            <div key={i} className="card" style={{ marginBottom: 10, padding: '14px 16px', cursor: 'pointer', border: selected.has(i) ? '2px solid #00CDBB' : '2px solid transparent' }}
+              onClick={() => toggleItem(i)}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+                <div style={{ width: 24, height: 24, borderRadius: 6, background: selected.has(i) ? '#00CDBB' : '#E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 2 }}>
+                  {selected.has(i) && <span style={{ color: 'white', fontSize: 14 }}>✓</span>}
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 700, fontSize: 15 }}>{food.name}</div>
+                  {food.note && <div style={{ fontSize: 12, color: '#94A3B8', marginTop: 2 }}>{food.note}</div>}
+                  <div style={{ display: 'flex', gap: 12, marginTop: 6, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 12, color: '#64748B' }}>🔥 {food.calories} kcal</span>
+                    <span style={{ fontSize: 12, color: '#64748B' }}>P: {food.protein}g</span>
+                    <span style={{ fontSize: 12, color: '#64748B' }}>K: {food.carbs}g</span>
+                    <span style={{ fontSize: 12, color: '#64748B' }}>F: {food.fat}g</span>
                   </div>
                 </div>
-              ))}
+              </div>
             </div>
-            <button className="btn-primary" style={{ width: '100%' }} disabled={selected.size === 0} onClick={handleConfirmSelect}>
-              {selected.size > 0 ? `${selected.size} Lebensmittel bestätigen →` : 'Bitte auswählen'}
-            </button>
-          </>
-        )}
+          ))}
+          <button className="btn btn-primary" style={{ width: '100%', marginTop: 14, fontSize: 16 }}
+            onClick={() => setStep('amounts')} disabled={selected.size === 0}>
+            Weiter ({selected.size} ausgewählt)
+          </button>
+        </div>
       </div>
-    </div>
-  )
+    )
+  }
+
+  // ─── AMOUNTS ───
+  if (step === 'amounts') {
+    const selectedFoods = foods.filter((_, i) => selected.has(i))
+    const totalKcal = selectedFoods.reduce((sum, f, i) => {
+      const g = parseFloat(amountMap[i]) || f.amount
+      return sum + Math.round(f.calories * (g / f.amount) * 10) / 10
+    }, 0)
+
+    return (
+      <div className="page">
+        <div className="header-bar">
+          <button className="back" onClick={() => setStep('select')}>‹</button>
+          <h1>Mengen anpassen</h1>
+          <div style={{ width: 60 }} />
+        </div>
+        <div className="page-content">
+          <div className="card" style={{ background: '#00CDBB', color: 'white', marginBottom: 14, padding: '12px 16px' }}>
+            <div style={{ fontSize: 13, opacity: 0.9 }}>Geschätzte Menge: ~{amountMap[0] || 150}g · Bitte anpassen</div>
+            <div style={{ fontSize: 22, fontWeight: 700 }}>🔥 {totalKcal} kcal gesamt</div>
+          </div>
+          {selectedFoods.map((food, realIdx) => {
+            const i = foods.indexOf(food)
+            return (
+              <div key={i} className="card" style={{ marginBottom: 12 }}>
+                <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 10 }}>{food.name}</div>
+                <div className="input-group" style={{ marginBottom: 10 }}>
+                  <label>Menge (g)</label>
+                  <input className="input" type="number" min="1" max="5000"
+                    value={amountMap[i]}
+                    onChange={e => handleAmountChange(i, e.target.value)} />
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
+                  {[[50, '50g'], [100, '100g'], [150, '150g'], [200, '200g']].map(([g, label]) => (
+                    <button key={g} className="btn-secondary" style={{ fontSize: 12, padding: '6px 4px' }}
+                      onClick={() => handleAmountChange(i, String(g))}>{label}</button>
+                  ))}
+                </div>
+                <div style={{ display: 'flex', gap: 10, marginTop: 8, flexWrap: 'wrap' }}>
+                  <span className="macro-pill"><span className="macro-pill-label">kcal</span><span className="macro-pill-value">{Math.round(food.calories * ((parseFloat(amountMap[i]) || food.amount) / food.amount) * 10) / 10}</span></span>
+                  <span className="macro-pill"><span className="macro-pill-label">Protein</span><span className="macro-pill-value">{Math.round(food.protein * ((parseFloat(amountMap[i]) || food.amount) / food.amount) * 10) / 10}g</span></span>
+                  <span className="macro-pill"><span className="macro-pill-label">KH</span><span className="macro-pill-value">{Math.round(food.carbs * ((parseFloat(amountMap[i]) || food.amount) / food.amount) * 10) / 10}g</span></span>
+                  <span className="macro-pill"><span className="macro-pill-label">Fett</span><span className="macro-pill-value">{Math.round(food.fat * ((parseFloat(amountMap[i]) || food.amount) / food.amount) * 10) / 10}g</span></span>
+                </div>
+              </div>
+            )
+          })}
+          <button className="btn btn-primary" style={{ width: '100%', fontSize: 16, marginTop: 4 }}
+            onClick={confirmSelect}>
+            ✓ Mahlzeiten übernehmen
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  return null
 }

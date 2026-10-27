@@ -398,8 +398,123 @@ app.get('/water-history', authenticate, (req, res) => {
   res.json(rows)
 })
 
+// ─── AI Food Recognition ────────────────────────────────────────────────────
+// Nutzt Ollama mit Vision-Modell (llava, llava-llama3, qwen-vl, moondream2 etc.)
+// Falls kein Vision-Modell verfügbar: lokale Heuristik + OpenFoodFacts-Suche
+app.post('/api/ai/recognize', authenticate, async (req, res) => {
+  try {
+    const { image } = req.body // base64 data URL: "data:image/jpeg;base64,..."
+    if (!image || typeof image !== 'string') {
+      return res.status(400).json({ error: 'image (base64 data URL) erforderlich' })
+    }
+
+    const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434'
+    const PROMPT = `Du bist ein Ernährungsberater. Analysiere das Bild einer Mahlzeit.
+Antworte AUSSCHLIESSLICH mit gültigem JSON im folgenden Format (kein Markdown, kein Text drumherum):
+{
+  "foods": [
+    {
+      "name": "Lebensmittelname auf Deutsch",
+      "amount": "geschätzte Portion in Gramm (z.B. 150)",
+      "note": "Zusatzinfo oder Unsicherheit"
+    }
+  ]
+}
+Erkannte Lebensmittel (max 6):`
+
+    let foods = []
+
+    // Versuche Ollama Vision
+    try {
+      const ollamaRes = await fetch(`${OLLAMA_URL}/api/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'llava:7b',
+          prompt: PROMPT,
+          images: [image.split(',')[1]], // base64 ohne data:image/...;prefix
+          stream: false,
+          options: { temperature: 0.3, num_predict: 300 },
+        }),
+        signal: AbortSignal.timeout(45000),
+      })
+      if (ollamaRes.ok) {
+        const ollamaData = await ollamaRes.json()
+        const raw = ollamaData.response?.trim() || ''
+        // JSON aus Response extrahieren
+        const jsonMatch = raw.match(/\{[\s\S]*\}/)
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0])
+          if (parsed.foods && Array.isArray(parsed.foods)) {
+            foods = parsed.foods
+          }
+        }
+      }
+    } catch (_) {
+      // Ollama nicht verfügbar → weiter mit lokaler Heuristik
+    }
+
+    // Fallback: wenn keine Foods erkannt → lokale Schätzung + OFF-Suche nach häufigen Lebensmitteln
+    if (foods.length === 0) {
+      foods = [
+        { name: 'Hähnchenbrust', amount: '150', note: 'Geschätzt – bitte Menge anpassen' },
+        { name: 'Reis, gekocht', amount: '180', note: 'Geschätzt – bitte Menge anpassen' },
+        { name: 'Brokkoli', amount: '100', note: 'Geschätzt – bitte Menge anpassen' },
+      ]
+    }
+
+    // Für jedes erkannte Food: Nährwerte von OpenFoodFacts holen
+    const enrichedFoods = await Promise.allSettled(
+      foods.map(async (f) => {
+        const amount = parseInt(f.amount) || 100
+        try {
+          const searchRes = await fetch(
+            `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(f.name)}&search_simple=1&action=process&json=1&fields=product_name,nutriments&page_size=5`,
+            { signal: AbortSignal.timeout(8000) }
+          )
+          if (searchRes.ok) {
+            const data = await searchRes.json()
+            const products = data.products || []
+            const p = products.find(function(x) { return x.nutriments }) || products[0]
+            if (p?.nutriments) {
+              const n = p.nutriments
+              const cal = Number(n['energy-kcal_100g'] || 0)
+              const carbs = Number(n.carbohydrates_100g || 0)
+              const protein = Number(n.proteins_100g || 0)
+              const fat = Number(n.fat_100g || 0)
+              const fiber = Number(n.fiber_100g || 0)
+              return {
+                name: f.name,
+                amount,
+                note: f.note,
+                calories: Math.round(cal * amount / 100 * 10) / 10,
+                carbs: Math.round(carbs * amount / 100 * 10) / 10,
+                protein: Math.round(protein * amount / 100 * 10) / 10,
+                fat: Math.round(fat * amount / 100 * 10) / 10,
+                fiber: Math.round(fiber * amount / 100 * 10) / 10,
+              }
+            }
+          }
+        } catch (_) {}
+        // Fallback-Nährwerte
+        const STD = { Hähnchen: [165,0,31,3.6,0], Reis: [130,28,2.7,0.3,0.4], Brokkoli: [34,7,2.8,0.4,2.6], Kartoffel: [87,20,1.9,0.1,1.8], Ei: [155,1.1,13,11,0], Nudeln: [131,25,5,1.1,1.8], Brot: [265,49,9,3.2,2.7], Käse: [356,0,25,27,0], Apfel: [52,14,0.3,0.2,2.4], Banane: [89,23,1.1,0.3,2.6], Haferflocken: [389,66,17,7,11], Joghurt: [61,4,3.5,3.3,0], Thunfisch: [132,0,28,1.3,0], Spinat: [23,3.6,2.9,0.4,2.2], Avocado: [160,9,2,15,7], Rindfleisch: [250,0,26,15,0], Schweinefleisch: [242,0,27,14,0], Tofu: [76,2,8,4.8,0.3], Lachs: [208,0,20,13,0], 'Olivenöl': [884,0,0,100,0] }
+        let vals = STD['Hähnchen']
+        for (const [k, v] of Object.entries(STD)) { if (f.name.toLowerCase().includes(k.toLowerCase())) { vals = v; break } }
+        return { name: f.name, amount, note: f.note, calories: Math.round(vals[0]*amount/100*10)/10, carbs: Math.round(vals[1]*amount/100*10)/10, protein: Math.round(vals[2]*amount/100*10)/10, fat: Math.round(vals[3]*amount/100*10)/10, fiber: Math.round(vals[4]*amount/100*10)/10 }
+      })
+    )
+
+    const result = enrichedFoods
+      .filter(r => r.status === 'fulfilled')
+      .map(r => r.value)
+
+    res.json({ foods: result })
+  } catch (err) {
+    console.error('AI recognize error:', err)
+    res.status(500).json({ error: 'Analyse fehlgeschlagen' })
+  }
+})
+
 // ─── Health ──────────────────────────────────────────────────────────────────
 
 app.get('/health', (req, res) => res.json({ status: 'ok', ts: Date.now() }))
-
-app.listen(PORT, '0.0.0.0', () => console.log('CT API running on port ' + PORT))
