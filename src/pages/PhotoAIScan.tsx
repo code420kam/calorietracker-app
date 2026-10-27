@@ -15,7 +15,7 @@ interface RecognizedFood {
 
 type Step = 'upload' | 'analyzing' | 'select' | 'amounts' | 'error'
 
-const API = 'https://songs-seeing-recording-subject.trycloudflare.com'
+const API = 'https://letting-eye-ellis-bids.trycloudflare.com'
 
 const FALLBACK_FOODS: RecognizedFood[] = [
   { name: 'Hähnchenbrust', amount: 150, calories: 247, carbs: 0, protein: 46, fat: 5, fiber: 0, note: '~150g – AI-Schätzung' },

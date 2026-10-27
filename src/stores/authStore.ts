@@ -1,7 +1,7 @@
 import type { User, Meal, DailyGoals, Activity, FavoriteFood, RecentFood, WaterDay, DashboardData, FoodSearchResult } from '../types'
 
 export function getBaseURL() {
-  return 'https://songs-seeing-recording-subject.trycloudflare.com/api'
+  return 'https://letting-eye-ellis-bids.trycloudflare.com/api'
 }
 
 export async function login(email: string, password: string) {
