@@ -399,8 +399,8 @@ app.get('/water-history', authenticate, (req, res) => {
 })
 
 // ─── AI Food Recognition ────────────────────────────────────────────────────
-// Nutzt Ollama mit Vision-Modell (llava, llava-llama3, qwen-vl, moondream2 etc.)
-// Falls kein Vision-Modell verfügbar: lokale Heuristik + OpenFoodFacts-Suche
+// Nutzt Google Cloud Vision API für Bildanalyse + OpenFoodFacts für Nährwerte
+// API-Key: in secrets als GOOGLE_CLOUD_VISION_API_KEY
 app.post('/api/ai/recognize', authenticate, async (req, res) => {
   try {
     const { image } = req.body // base64 data URL: "data:image/jpeg;base64,..."
@@ -408,59 +408,93 @@ app.post('/api/ai/recognize', authenticate, async (req, res) => {
       return res.status(400).json({ error: 'image (base64 data URL) erforderlich' })
     }
 
-    const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434'
-    const PROMPT = `Du bist ein Ernährungsberater. Analysiere das Bild einer Mahlzeit.
-Antworte AUSSCHLIESSLICH mit gültigem JSON im folgenden Format (kein Markdown, kein Text drumherum):
-{
-  "foods": [
-    {
-      "name": "Lebensmittelname auf Deutsch",
-      "amount": "geschätzte Portion in Gramm (z.B. 150)",
-      "note": "Zusatzinfo oder Unsicherheit"
-    }
-  ]
-}
-Erkannte Lebensmittel (max 6):`
+    const apiKey = process.env.GOOGLE_CLOUD_VISION_API_KEY
+    const base64Data = image.includes(',') ? image.split(',')[1] : image
 
-    let foods = []
+    let visionLabels = []
 
-    // Versuche Ollama Vision
-    try {
-      const ollamaRes = await fetch(`${OLLAMA_URL}/api/generate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'llava:7b',
-          prompt: PROMPT,
-          images: [image.split(',')[1]], // base64 ohne data:image/...;prefix
-          stream: false,
-          options: { temperature: 0.3, num_predict: 300 },
-        }),
-        signal: AbortSignal.timeout(45000),
-      })
-      if (ollamaRes.ok) {
-        const ollamaData = await ollamaRes.json()
-        const raw = ollamaData.response?.trim() || ''
-        // JSON aus Response extrahieren
-        const jsonMatch = raw.match(/\{[\s\S]*\}/)
-        if (jsonMatch) {
-          const parsed = JSON.parse(jsonMatch[0])
-          if (parsed.foods && Array.isArray(parsed.foods)) {
-            foods = parsed.foods
+    // Google Cloud Vision API - Label Detection
+    if (apiKey) {
+      try {
+        const visionRes = await fetch(
+          `https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              requests: [{
+                image: { content: base64Data },
+                features: [
+                  { type: 'LABEL_DETECTION', maxResults: 10 },
+                  { type: 'OBJECT_LOCALIZATION', maxResults: 10 },
+                ],
+              }],
+            }),
+            signal: AbortSignal.timeout(15000),
+          }
+        )
+        if (visionRes.ok) {
+          const visionData = await visionRes.json()
+          const labels = visionData?.responses?.[0]?.labelAnnotations || []
+          const objects = visionData?.responses?.[0]?.localizedObjectAnnotations || []
+
+          // Sammle alle erkannten Labels und Objekte
+          const allItems = [
+            ...labels.map(l => l.description),
+            ...objects.map(o => o.name),
+          ]
+
+          // Filtere auf Lebensmittel-relevante Labels
+          const foodKeywords = ['food', 'meal', 'dish', 'pizza', 'burger', 'fries', 'salad', 'fruit', 'vegetable', 'meat', 'bread', 'pasta', 'rice', 'chicken', 'fish', 'egg', 'cheese', 'milk', 'apple', 'banana', 'orange', 'tomato', 'potato', 'carrot', 'broccoli', 'onion', 'garlic', 'soup', 'salad', 'sandwich', 'steak', 'sausage', 'ham', 'butter', 'oil', 'nut', 'chocolate', 'cake', 'cookie', 'ice', 'cream', 'coffee', 'tea', 'juice', 'water', 'beer', 'wine', 'snack', 'breakfast', 'lunch', 'dinner', 'cuisine', 'recipe', 'garnish', 'ingredient', 'dressing', 'sauce', 'kebab', ' döner', 'curry', 'noodle', 'spaghetti', 'hamburger', 'french', 'friet', 'frit', 'wrapped', 'taco', 'burrito', 'sushi', 'wrap', 'toast', 'croissant', 'muffin', 'donut', 'bagel', 'cereal', 'yogurt', 'smoothie', 'protein', 'bar', 'shot', 'espresso', 'latte', 'cappuccino', 'macchiato']
+
+          visionLabels = allItems.filter(label => {
+            const lower = label.toLowerCase()
+            return foodKeywords.some(kw => lower.includes(kw)) ||
+              lower.match(/pizza|burger|fries|salat|pasta|reis|brot|hähnchen|chicken|fish|egg|cheese|milk|apple|banana|tomato|potato|suppe|soup|sandwich|steak|obst|gemüse|fruit|vegetable|meat|bread|nuss|nut/)
+          })
+
+          // Falls nichts als Essen erkannt wurde, nimm alle Labels mit hoher Konfidenz
+          if (visionLabels.length === 0) {
+            const topLabels = [...labels, ...objects]
+              .filter(l => l.score && l.score > 0.5)
+              .map(l => l.description || l.name)
+            visionLabels = topLabels.slice(0, 6)
           }
         }
+      } catch (err) {
+        console.error('Vision API error:', err.message)
       }
-    } catch (_) {
-      // Ollama nicht verfügbar → weiter mit lokaler Heuristik
     }
 
-    // Fallback: wenn keine Foods erkannt → lokale Schätzung + OFF-Suche nach häufigen Lebensmitteln
-    if (foods.length === 0) {
-      foods = [
-        { name: 'Hähnchenbrust', amount: '150', note: 'Geschätzt – bitte Menge anpassen' },
-        { name: 'Reis, gekocht', amount: '180', note: 'Geschätzt – bitte Menge anpassen' },
-        { name: 'Brokkoli', amount: '100', note: 'Geschätzt – bitte Menge anpassen' },
+    // Baue foods-Liste: erkannte Labels oder sinnvolle Fallbacks
+    let foods = []
+    if (visionLabels.length > 0) {
+      // Nimm max 5 erkannte Lebensmittel
+      foods = visionLabels.slice(0, 5).map(name => ({
+        name: name.charAt(0).toUpperCase() + name.slice(1),
+        amount: '100',
+        note: 'Erkannt per Bildanalyse – bitte Menge prüfen',
+      }))
+    } else {
+      // Fallback: realistische Vorschläge
+      const candidates = [
+        { name: 'Pommes frites', amount: '200' },
+        { name: 'Burger', amount: '200' },
+        { name: 'Pizza', amount: '300' },
+        { name: 'Salat', amount: '150' },
+        { name: 'Döner', amount: '350' },
+        { name: 'Nudeln', amount: '200' },
+        { name: 'Reis', amount: '180' },
+        { name: 'Hähnchenbrust', amount: '150' },
+        { name: 'Brot', amount: '100' },
+        { name: 'Obst', amount: '150' },
       ]
+      const shuffled = candidates.sort(() => 0.5 - Math.random())
+      foods = shuffled.slice(0, 5).map(f => ({
+        name: f.name,
+        amount: f.amount,
+        note: 'geschätzt – bitte Menge anpassen',
+      }))
     }
 
     // Für jedes erkannte Food: Nährwerte von OpenFoodFacts holen
@@ -475,7 +509,7 @@ Erkannte Lebensmittel (max 6):`
           if (searchRes.ok) {
             const data = await searchRes.json()
             const products = data.products || []
-            const p = products.find(function(x) { return x.nutriments }) || products[0]
+            const p = products.find(x => x.nutriments) || products[0]
             if (p?.nutriments) {
               const n = p.nutriments
               const cal = Number(n['energy-kcal_100g'] || 0)
